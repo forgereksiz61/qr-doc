@@ -7,7 +7,7 @@ type PdfRouteContext = {
   params: Promise<{ token: string }>;
 };
 
-export async function GET(_request: Request, context: PdfRouteContext) {
+export async function GET(request: Request, context: PdfRouteContext) {
   const { token } = await context.params;
-  return reportPdfResponse(token);
+  return reportPdfResponse(token, request);
 }

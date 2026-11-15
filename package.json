@@ -9,9 +9,11 @@
     "lint": "eslint",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "import:pdfs": "tsx scripts/import-pdfs.ts",
+    "blob:upload": "tsx scripts/upload-blob.ts",
     "qr": "tsx scripts/make-qr.ts"
   },
   "dependencies": {
+    "@vercel/blob": "^2.9.0",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",

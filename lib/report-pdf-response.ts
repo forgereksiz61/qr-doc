@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { readReportPdf } from "@/lib/local-report-storage";
+import { usesPrivateBlob } from "@/lib/report-location";
 import { isValidReportToken } from "@/lib/report-token";
 
 const PRIVATE_HEADERS = {
@@ -111,27 +112,118 @@ async function manifestDownloadName(token: string): Promise<string | null> {
   return null;
 }
 
-export async function reportPdfResponse(token: string): Promise<NextResponse> {
+function pdfHeaders(filename: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    ...PRIVATE_HEADERS,
+    "Content-Type": "application/pdf",
+    "Content-Disposition": inlineContentDisposition(filename),
+    "Accept-Ranges": "bytes",
+    ...extra,
+  };
+}
+
+function parseSingleRange(
+  header: string,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | "unsupported" {
+  if (!header.startsWith("bytes=") || header.includes(",")) {
+    return "unsupported";
+  }
+
+  const match = /^(\d*)-(\d*)$/.exec(header.slice("bytes=".length).trim());
+  if (!match || size <= 0) {
+    return "unsatisfiable";
+  }
+
+  const [, startText, endText] = match;
+  if (startText === "" && endText === "") {
+    return "unsatisfiable";
+  }
+
+  if (startText === "") {
+    const suffix = Number(endText);
+    if (!Number.isInteger(suffix) || suffix <= 0) {
+      return "unsatisfiable";
+    }
+    return { start: Math.max(size - suffix, 0), end: size - 1 };
+  }
+
+  const start = Number(startText);
+  const end = endText === "" ? size - 1 : Number(endText);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start >= size) {
+    return "unsatisfiable";
+  }
+
+  return { start, end: Math.min(end, size - 1) };
+}
+
+function pdfBytesResponse(bytes: Buffer, filename: string, request: Request): NextResponse {
+  const body = new Uint8Array(bytes);
+  const range = request.headers.get("range");
+  if (!range) {
+    return new NextResponse(body, {
+      status: 200,
+      headers: pdfHeaders(filename, { "Content-Length": String(body.byteLength) }),
+    });
+  }
+
+  const parsed = parseSingleRange(range, body.byteLength);
+  if (parsed === "unsupported") {
+    return new NextResponse(body, {
+      status: 200,
+      headers: pdfHeaders(filename, { "Content-Length": String(body.byteLength) }),
+    });
+  }
+  if (parsed === "unsatisfiable") {
+    return new NextResponse(null, {
+      status: 416,
+      headers: {
+        ...PRIVATE_HEADERS,
+        "Content-Range": `bytes */${body.byteLength}`,
+      },
+    });
+  }
+
+  const slice = body.subarray(parsed.start, parsed.end + 1);
+  return new NextResponse(new Uint8Array(slice), {
+    status: 206,
+    headers: pdfHeaders(filename, {
+      "Content-Range": `bytes ${parsed.start}-${parsed.end}/${body.byteLength}`,
+      "Content-Length": String(slice.byteLength),
+    }),
+  });
+}
+
+async function readReportBytes(token: string): Promise<Buffer | null> {
+  if (!usesPrivateBlob()) {
+    return readReportPdf(token);
+  }
+
+  const { readPrivateReportPdf } = await import("@/lib/private-blob-reports");
+  return readPrivateReportPdf(token);
+}
+
+async function readReportFileName(token: string): Promise<string> {
+  if (!usesPrivateBlob()) {
+    return (await manifestDownloadName(token)) ?? FALLBACK_NAME;
+  }
+
+  const { readPrivateReportFileName } = await import("@/lib/private-blob-reports");
+  return (await readPrivateReportFileName(token)) ?? FALLBACK_NAME;
+}
+
+export async function reportPdfResponse(token: string, request: Request): Promise<NextResponse> {
   if (!isValidReportToken(token)) {
     return textResponse("Rapor bulunamadı.", 404);
   }
 
   try {
-    const pdf = await readReportPdf(token);
+    const pdf = await readReportBytes(token);
     if (!pdf) {
       return textResponse("Rapor bulunamadı.", 404);
     }
 
-    const filename = (await manifestDownloadName(token)) ?? FALLBACK_NAME;
-
-    return new NextResponse(new Uint8Array(pdf), {
-      status: 200,
-      headers: {
-        ...PRIVATE_HEADERS,
-        "Content-Type": "application/pdf",
-        "Content-Disposition": inlineContentDisposition(filename),
-      },
-    });
+    return pdfBytesResponse(pdf, await readReportFileName(token), request);
   } catch {
     return textResponse("Belge şu anda görüntülenemiyor.", 500);
   }

@@ -39,3 +39,6 @@ next-env.d.ts
 # yerel prototip verisi
 /local-data/
 /exports/
+
+.vercel
+.env*

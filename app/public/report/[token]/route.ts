@@ -7,7 +7,7 @@ type ReportRouteContext = {
   params: Promise<{ token: string }>;
 };
 
-export async function GET(_request: Request, context: ReportRouteContext) {
+export async function GET(request: Request, context: ReportRouteContext) {
   const { token } = await context.params;
-  return reportPdfResponse(token);
+  return reportPdfResponse(token, request);
 }
