@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Rapor Görüntüleyici",
   description: "Yerel test raporu görüntüleme sayfası.",
+  icons: {
+    icon: "data:,",
+  },
   robots: {
     index: false,
     follow: false,
